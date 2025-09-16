@@ -6,22 +6,20 @@
 void tracking() {
 	dlib::frontal_face_detector detector = dlib::get_frontal_face_detector();
 	dlib::shape_predictor pose_model;
-	dlib::deserialize("../shape_predictor_68_face_landmarks.dat");
+	dlib::deserialize("./shape_predictor_68_face_landmarks.dat") >> pose_model;
 	
 	cv::VideoCapture cap;
 	cap.open("teste.mp4");
 	cv::Mat frame;
 	cv::VideoWriter writer("resultado.mp4",
-		cv::VideoWriter::fourcc('H', '2', '6', '4'),
+		cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
 		30,
-		cv::Size(cap.get(cv::CAP_PROP_FRAME_WIDTH), cap.get(cv::CAP_PROP_FRAME_HEIGHT))
+		cv::Size(cap.get(cv::CAP_PROP_FRAME_WIDTH), cap.get(cv::CAP_PROP_FRAME_HEIGHT)),
+		false
 	);
 	
 
-	while (true) {
-		cap >> frame;
-		if (frame.empty()) break;
-
+	while (cap.read(frame)) {
 		dlib::cv_image<dlib::bgr_pixel> cimg(frame);
 		std::vector<dlib::rectangle> faces = detector(cimg);
 		std::vector<dlib::full_object_detection> shapes;
@@ -51,8 +49,8 @@ void tracking() {
 
 		cv::Mat left_rotated;
 		cv::Mat right_rotated;
-		cv::Point2f left_center;
-		cv::Point2f right_center;
+		cv::Point2f left_center = left_eye_rect.center;
+		cv::Point2f right_center = right_eye_rect.center;
 		cv::Mat left_bounding_crop;
 		cv::Mat right_bounding_crop;
 		cv::Mat left_gray_crop;
@@ -62,10 +60,18 @@ void tracking() {
 		cv::Mat right_rot_mat = cv::getRotationMatrix2D(right_eye_rect.center, right_eye_rect.angle, 1.0);
 		cv::warpAffine(frame, left_rotated, left_rot_mat, frame.size());
 		cv::warpAffine(frame, right_rotated, right_rot_mat, frame.size());
-		cv::Size left_size = cv::Point2f(shapes.at(0).part(40).x()) - cv::Point2f(shapes.at(0).part(37).x());
-		cv::Size right_size = cv::Point2f(shapes.at(0).part(46).x()) - cv::Point2f(shapes.at(0).part(43).x());
-		cv::getRectSubPix(left_rotated, left_size, left_center, left_bounding_crop);
-		cv::getRectSubPix(right_rotated, right_size, right_center, right_bounding_crop);
+		cv::Size left_size(
+			std::abs(shapes.at(0).part(39).x() - shapes.at(0).part(36).x()),
+			std::abs(shapes.at(0).part(41).y() - shapes.at(0).part(38).y())
+		);
+		cv::Size right_size(
+			std::abs(shapes.at(0).part(45).x() - shapes.at(0).part(42).x()),
+			std::abs(shapes.at(0).part(46).y() - shapes.at(0).part(44).y())
+		);
+		cv::Size dimensions(left_size.width > right_size.width ? left_size.width : right_size.width,
+			left_size.height > right_size.height ? left_size.height : right_size.height);
+		cv::getRectSubPix(left_rotated, dimensions, left_center, left_bounding_crop);
+		cv::getRectSubPix(right_rotated, dimensions, right_center, right_bounding_crop);
 
 		cv::cvtColor(left_bounding_crop, left_gray_crop, cv::COLOR_BGR2GRAY);
 		cv::cvtColor(right_bounding_crop, right_gray_crop, cv::COLOR_BGR2GRAY);
@@ -76,12 +82,12 @@ void tracking() {
 		for (int y = 0; y < left_gray_crop.rows; y++) {
 			for (int x = 0; x < left_gray_crop.cols; x++) {
 				for (int c = 0; c < left_gray_crop.channels(); c++) {
-					left_gray_crop.at<cv::Vec3b>(y, x)[c] =
+					left_gray_crop.at<uchar>(y, x) =
 						/*cv::saturate_cast<uchar>(
 							(alpha_slider / 100.0) * left_gray_crop.at<cv::Vec3b>(y, x)[c] + betha_slider
 						);*/
 						cv::saturate_cast<uchar>(
-							left_gray_crop.at<cv::Vec3b>(y, x)[c]
+							left_gray_crop.at<uchar>(y, x)
 						);
 				}
 
@@ -91,12 +97,12 @@ void tracking() {
 		for (int y = 0; y < right_gray_crop.rows; y++) {
 			for (int x = 0; x < right_gray_crop.cols; x++) {
 				for (int c = 0; c < right_gray_crop.channels(); c++) {
-					right_gray_crop.at<cv::Vec3b>(y, x)[c] =
+					right_gray_crop.at<uchar>(y, x) =
 						/*cv::saturate_cast<uchar>(
 							(alpha_slider / 100.0) * right_gray_crop.at<cv::Vec3b>(y, x)[c] + betha_slider
 						);*/
 						cv::saturate_cast<uchar>(
-							right_gray_crop.at<cv::Vec3b>(y, x)[c]
+							right_gray_crop.at<uchar>(y, x)
 						);
 				}
 			}
@@ -136,13 +142,19 @@ void tracking() {
 		cv::Mat erode_mat = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(16, 6));
 		cv::erode(bin_sum, bin_sum, erode_mat, cv::Point(-1, -1));
 		cv::dilate(bin_sum, bin_sum, erode_mat, cv::Point(-1, -1));
-		writer.write(erode_mat);
+
+		
+		cv::cvtColor(bin_sum, bin_sum, cv::COLOR_GRAY2BGR);
+		bin_sum.copySize(frame);
+		writer.write(bin_sum);
 	}
 	writer.release();
+	cap.release();
 }
 
 int main()
 {
 	tracking();
+	cv::destroyAllWindows();
 	return 0;
 }
