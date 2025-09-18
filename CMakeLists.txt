@@ -14,12 +14,14 @@ project (eye-tracker)
 
 find_package(OpenCV REQUIRED)
 
-include(FetchContent)
-FetchContent_Declare(dlib
-    GIT_REPOSITORY https://github.com/davisking/dlib.git
-    GIT_TAG        v19.24
-)
-FetchContent_MakeAvailable(dlib)
+#include(FetchContent)
+add_subdirectory("externals/dlib")
+set(CUDA_ARCH_LIST "86")
+#FetchContent_Declare(dlib
+#    GIT_REPOSITORY https://github.com/davisking/dlib.git
+#    GIT_TAG        v19.24
+#)
+#FetchContent_MakeAvailable(dlib)
 
 add_executable(eye-tracker "./Eye-tracker/Eye-tracker.cpp" "./Eye-tracker/Eye-tracker.h")
 
