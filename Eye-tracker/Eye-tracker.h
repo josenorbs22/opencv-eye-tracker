@@ -9,6 +9,7 @@
 #include <dlib/image_processing/shape_predictor.h>
 #include <dlib/opencv/cv_image.h>
 
-void tracking();
+void tracking_with_face();
+void tracking_eyes_only();
 
 // TODO: Referencie os cabeçalhos adicionais de que seu programa precisa aqui.
