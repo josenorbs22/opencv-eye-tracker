@@ -221,15 +221,15 @@ void tracking_with_face() {
 	cap.release();
 }
 
-void tracking_eyes_only() {
+void tracking_haar() {
 	cv::CascadeClassifier eyeCascade;
-	if (!eyeCascade.load("haarcascade_eye_tree_eyeglasses.xml")) {
+	if (!eyeCascade.load("haarcascade_eye.xml")) {
 		std::cerr << "Erro ao carregar Haar Cascade de olhos!" << std::endl;
 		return;
 	}
 	//cv::VideoCapture cap(0);
 	cv::VideoCapture cap;
-	cap.open("teste.mp4");
+	cap.open("teste (9).mp4");
 	cv::Mat frame, gray;
 	cv::VideoWriter writer("resultado.mp4",
 		cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
@@ -367,10 +367,197 @@ void tracking_eyes_only() {
 	cap.release();
 }
 
+absl::Status tracking_mediapipe(std::string file_name) {
+	mediapipe::CalculatorGraph graph;
+	std::string graph_config_contents;
+
+	auto status = mediapipe::file::GetContents("mediapipe/examples/desktop/my_eye_tracking/assets/face_mesh_desktop.pbtxt", &graph_config_contents);
+	//auto status = mediapipe::file::GetContents("mediapipe/examples/desktop/my_eye_tracking/assets/face_mesh_desktop_live.pbtxt", &graph_config_contents);
+	//auto status = mediapipe::file::GetContents("mediapipe/examples/desktop/my_eye_tracking/assets/face_mesh_desktop_live_gpu.pbtxt", &graph_config_contents);
+	if (!status.ok()) {
+		std::cerr << "Erro ao carregar .pbtxt: " << status.message() << std::endl;
+		return status;
+	}
+
+	mediapipe::CalculatorGraphConfig config =
+		mediapipe::ParseTextProtoOrDie<mediapipe::CalculatorGraphConfig>(graph_config_contents);
+
+	auto init_status = graph.Initialize(config);
+	if (!init_status.ok()) {
+		std::cerr << "Erro ao inicializar o gráfico: " << init_status.message() << std::endl;
+		return init_status;
+	}
+
+	/*auto poller_status = graph.AddOutputStreamPoller(kOutputStream);
+	if (!poller_status.ok()) {
+		std::cerr << "Erro ao criar poller: " << poller_status.status() << std::endl;
+		return poller_status.status();
+	}
+	mediapipe::OutputStreamPoller poller = std::move(poller_status.value());*/
+	MP_ASSIGN_OR_RETURN(auto poller,
+		graph.AddOutputStreamPoller(kOutputStream));
+
+	std::map<std::string, mediapipe::Packet> side_packets;
+	side_packets["input_video_path"] = mediapipe::MakePacket<std::string>("mediapipe/examples/desktop/my_eye_tracking/assets/" + file_name);
+	side_packets["output_video_path"] = mediapipe::MakePacket<std::string>("mediapipe/examples/desktop/my_eye_tracking/assets/resultado.mp4");
+	auto start_status = graph.StartRun(side_packets);
+	//auto start_status = graph.StartRun({});
+	if (!start_status.ok()) {
+		std::cerr << "Erro em StartRun: " << start_status.message() << std::endl;
+		return start_status;
+	}
+	//MP_RETURN_IF_ERROR(graph.StartRun({}));
+
+	cv::VideoCapture cap;
+
+	if (!cap.open("mediapipe/examples/desktop/my_eye_tracking/assets/" + file_name)) {
+		//if(!cap.open(0)) {
+		std::cout << "Erro ao abrir vídeo!" << std::endl;
+		return absl::InternalError("Erro ao abrir vídeo!");
+	}
+	cv::Mat frame;
+	int frame_id = 0;
+
+	/*cv::VideoWriter writer("/home/josen/resultado.mp4",
+		cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
+		cap.get(cv::CAP_PROP_FPS),
+		cv::Size(cap.get(cv::CAP_PROP_FRAME_WIDTH), cap.get(cv::CAP_PROP_FRAME_HEIGHT))
+	);*/
+	std::vector<int> frames;
+	std::vector<int> coord_esquerdo_x, coord_esquerdo_y;
+	std::vector<int> coord_direito_x, coord_direito_y;
+	std::vector<std::pair<double, double>> pontos_esquerdo_x;
+	std::vector<std::pair<double, double>> pontos_direito_x;
+	std::vector<std::pair<double, double>> pontos_esquerdo_y;
+	std::vector<std::pair<double, double>> pontos_direito_y;
+	Gnuplot gp;
+
+	mediapipe::Packet packet;
+	//while (cap.read(frame)) {
+	while (poller.Next(&packet)) {
+		cap >> frame;
+		if (frame.empty()) break;
+		//cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
+		auto input_frame = absl::make_unique<mediapipe::ImageFrame>(
+			mediapipe::ImageFormat::SRGB, frame.cols, frame.rows,
+			mediapipe::ImageFrame::kDefaultAlignmentBoundary);
+		cv::Mat input_frame_mat = mediapipe::formats::MatView(input_frame.get());
+		frame.copyTo(input_frame_mat);
+		mediapipe::Timestamp ts = mediapipe::Timestamp(frame_id++);
+		//auto& output_frame = packet.Get<mediapipe::ImageFrame>();
+
+		//cv::Mat output_mat = mediapipe::formats::MatView(&output_frame);
+
+
+
+		/*auto add_packet_status = graph.AddPacketToInputStream(
+			kInputStream,
+			mediapipe::Adopt(input_frame.release()).At(ts)
+		);
+		if (!add_packet_status.ok()) {
+			std::cerr << "Erro em AddPacketToInputStream: " << add_packet_status.message() << std::endl;
+			return add_packet_status;
+		}
+		MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+			kInputStream,
+			mediapipe::Adopt(input_frame.release()).At(ts)
+		));*/
+
+		//if(poller.Next(&packet)) {
+			// Processar o pacote
+		auto& output_frames =
+			packet.Get<std::vector<mediapipe::NormalizedLandmarkList>>();
+		if (!output_frames.empty()) {
+			const auto& face_landmarks = output_frames[0];
+
+			// Índices dos olhos (exemplo: olho direito e esquerdo)
+			std::vector<int> left_eye_idx = { 468, 469, 470, 471, 472 };
+			std::vector<int> right_eye_idx = { 473, 474, 475, 476, 477 };
+			frames.push_back(frame_id);
+			coord_esquerdo_x.push_back(face_landmarks.landmark(468).x());
+			coord_esquerdo_y.push_back(face_landmarks.landmark(468).y());
+			coord_direito_x.push_back(face_landmarks.landmark(473).x());
+			coord_direito_y.push_back(face_landmarks.landmark(473).y());
+			pontos_esquerdo_x.emplace_back(frame_id, face_landmarks.landmark(468).x() * frame.cols);
+			pontos_direito_x.emplace_back(frame_id, face_landmarks.landmark(473).x() * frame.cols);
+			pontos_esquerdo_y.emplace_back(frame_id, face_landmarks.landmark(468).y() * frame.rows);
+			pontos_direito_y.emplace_back(frame_id, face_landmarks.landmark(473).y() * frame.rows);
+			for (int idx : left_eye_idx) {
+				const auto& lm = face_landmarks.landmark(idx);
+				int x = lm.x() * frame.cols;
+				int y = lm.y() * frame.rows;
+				cv::circle(frame, cv::Point(x, y), 2, { 255,0,0 }, -1);
+			}
+
+			for (int idx : right_eye_idx) {
+				const auto& lm = face_landmarks.landmark(idx);
+				int x = lm.x() * frame.cols;
+				int y = lm.y() * frame.rows;
+				cv::circle(frame, cv::Point(x, y), 2, { 0,255,0 }, -1);
+			}
+
+
+		}
+		//} else {
+			//std::cerr << "Erro ao obter próximo pacote do poller." << std::endl;
+			//break;
+		//}
+		/*plt::figure();
+		plt::named_plot("Olho X", frames, coord_esquerdo_x, "r-");
+		plt::named_plot("Olho Y", frames, coord_esquerdo_y, "b-");
+		plt::xlabel("Frame");
+		plt::ylabel("Posição normalizada");
+		plt::legend();
+		plt::show();*/
+
+		cv::cvtColor(frame, frame, cv::COLOR_RGB2BGR);
+		cv::imshow("Face Mesh Olhos", frame);
+		//writer.write(frame);
+		if (cv::waitKey(1) == 27) break;
+
+	}
+	//writer.release();*/
+	gp << "set multiplot layout 2,2 title 'Movimento dos olhos'\n";
+
+	gp << "set title 'Posição do olho por frame'\n";
+	gp << "plot '-' with lines title 'Olho E X'\n";
+	gp.send1d(pontos_esquerdo_x);
+	gp << "plot '-' with lines title 'Olho E Y'\n";
+	gp.send1d(pontos_esquerdo_y);
+	gp << "plot '-' with lines title 'Olho D X'\n";
+	gp.send1d(pontos_direito_x);
+	gp << "plot '-' with lines title 'Olho D Y'\n";
+	gp.send1d(pontos_direito_y);
+	gp << "unset multiplot\n";
+
+	graph.CloseInputStream(kInputStream);
+	graph.WaitUntilDone();
+	return absl::OkStatus();
+}
+
 int main()
 {
 	//tracking_with_face();
-	tracking_eyes_only();
+	//tracking_haar();
+	std::string file_name;
+	absl::Status status;
+
+	while (true)
+	{
+		/* code */
+		std::cout << "Digite o nome do arquivo de vídeo (com extensão): ";
+		std::getline(std::cin, file_name); // read input from
+		if (file_name == "sair" || file_name == "exit") {
+			break;
+		}
+		else {
+			std::cout << "Processando o arquivo: " << file_name << std::endl;
+		}
+		status = tracking_mediapipe(file_name);
+	}
+
+
+
 	cv::destroyAllWindows();
-	return 0;
+	return status.ok() ? 0 : 1;
 }
